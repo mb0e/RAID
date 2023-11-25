@@ -2,7 +2,6 @@ import pickle, logging
 import argparse
 import time
 import fsconfig
-
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.server import SimpleXMLRPCRequestHandler
 
@@ -17,11 +16,33 @@ class DiskBlocks():
     # initialize request counter
     self.counter = 0
     self.delayat = delayat
+    #self.corrupt_block =None
+    ## edited
+    self.checksum=[None]*total_num_blocks
+    ## edited
+    
     # Initialize raw blocks
     for i in range (0, total_num_blocks):
       putdata = bytearray(block_size)
       self.block.insert(i,putdata)
-
+      ## initialize checksum 
+      #self.checksum[i]=None
+      ## edited
+      
+  ## Compute Checksum
+  def ComputeChecksum(self,block_number):
+    data = self.block[block_number]
+    checksum=0
+    for byte in data:
+       checksum ^=byte
+    return checksum
+  ## verify checksum
+  def VerifyChecksum(self,block_number):
+    data = self.block[block_number]
+    computed_checksum = self.ComputeChecksum(block_number) 
+    return stored_checksum == computed_checksum 
+  ## edited
+    
   def Sleep(self):
     self.counter += 1
     if (self.counter % self.delayat) == 0:
@@ -62,6 +83,7 @@ if __name__ == "__main__":
   else:
     # initialize delayat with artificially large number
     delayat = 1000000000
+  
 
   # initialize blocks
   RawBlocks = DiskBlocks(TOTAL_NUM_BLOCKS, BLOCK_SIZE, delayat)
@@ -80,6 +102,10 @@ if __name__ == "__main__":
   def Put(block_number, data):
     RawBlocks.block[block_number] = data.data
     RawBlocks.Sleep()
+    
+    ## edited
+    RawBlocks.checksum[block_number]= RawBlocks.ComputeChecksum(block_number) 
+    ## end
     return 0
 
   server.register_function(Put)
