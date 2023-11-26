@@ -29,6 +29,14 @@ if __name__ == "__main__":
     ap.add_argument('-is', '--inode_size', type=int, help='an integer value')
     ap.add_argument('-cid', '--client_id', type=int, help='an integer value')
     ap.add_argument('-port', '--port', type=int, help='an integer value')
+    
+    ## edited
+    ap.add_argument('-ns', '--num_servers', type=int, help='an integer value')
+    ap.add_argument('-startport', '--start_port', type=int, help='an integer value')
+    ap.add_argument('-logcache', '--log_cache', type=int, choices=[0,1], help='0 to disable, 1 to enable')
+    ## end
+
+
 
     # Other than FS args, consecutive args will be captured in by 'arg' as list
     ap.add_argument('arg', nargs='*')
