@@ -1,6 +1,7 @@
 import pickle, logging
 import fsconfig
 import xmlrpc.client, socket, time
+import hashlib
 
 #### BLOCK LAYER
 
@@ -23,6 +24,7 @@ class DiskBlocks():
             print('Must specify port number')
             quit()
 ##RAID
+        self.checksums = {}
         self.num_servers = num_servers
         self.block_servers = []
         for server_id in range(num_servers):
@@ -61,6 +63,12 @@ class DiskBlocks():
         return distributed_blocks
 ##RAID end
 
+##RAID
+    def generate_checksum(block_data):
+        sha_signature = hashlib.sha256(block_data).hexdigest()
+        return sha_signature
+##RAID end
+
     def Put(self, block_number, block_data):
         logging.debug(
             'Put: block number ' + str(block_number) + ' len ' + str(len(block_data)) + '\n' + str(block_data.hex()))
@@ -78,8 +86,10 @@ class DiskBlocks():
                 logging.error(f'Failed to put block {block_number} to server {i}: {e}')
                 print(f'SERVER_DISCONNECTED PUT {block_number}')
 
-##RAID end
+        checksum = self.generate_checksum(block_data)
+        self.checksums[block_number] = checksum
 
+##RAID end
         if block_number in range(0, fsconfig.TOTAL_NUM_BLOCKS):
             # ljust does the padding with zeros
             putdata = bytearray(block_data.ljust(fsconfig.BLOCK_SIZE, b'\x00'))
@@ -152,6 +162,12 @@ class DiskBlocks():
             for i in range(len(blocks)):
                 if blocks[i] is None:
                     blocks[i] = self.reconstruct_block(blocks)
+
+            read_data = self.block_server.Get(block_number)
+            read_checksum = self.generate_checksum(read_data)
+            stored_checksum = self.checksums[block_number]
+            if read_checksum != stored_checksum:
+                logging.error(f'Checksum mismatch for block {block_number}. Data is corrupted.')
 
             #return b''.join(blocks)
 ## RAID end
