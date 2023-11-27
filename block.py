@@ -7,7 +7,7 @@ import xmlrpc.client, socket, time
 # global TOTAL_NUM_BLOCKS, BLOCK_SIZE, INODE_SIZE, MAX_NUM_INODES, MAX_FILENAME, INODE_NUMBER_DIRENTRY_SIZE
 
 class DiskBlocks():
-    def __init__(self):
+    def __init__(self, num_servers):
 
         # initialize clientID
         if fsconfig.CID >= 0 and fsconfig.CID < fsconfig.MAX_CLIENTS:
@@ -22,8 +22,19 @@ class DiskBlocks():
         else:
             print('Must specify port number')
             quit()
-        server_url = 'http://' + fsconfig.SERVER_ADDRESS + ':' + str(PORT)
-        self.block_server = xmlrpc.client.ServerProxy(server_url, use_builtin_types=True)
+##RAID
+        self.num_servers = num_servers
+        self.block_servers = []
+        for server_id in range(num_servers):
+            server_url = 'http://' + fsconfig.SERVER_ADDRESS + ':' + str(fsconfig.PORT + server_id)
+            server_proxy = xmlrpc.client.ServerProxy(server_url, use_builtin_types=True)
+            self.block_servers.append(server_proxy)
+        
+        self.rsm_server = self.servers[0]
+        print(f'RSM server {self.rsm_server.id}')
+
+##RAID end
+
         socket.setdefaulttimeout(fsconfig.SOCKET_TIMEOUT)
         # initialize block cache empty
         self.blockcache = {}
@@ -31,13 +42,43 @@ class DiskBlocks():
     ## Put: interface to write a raw block of data to the block indexed by block number
     ## Blocks are padded with zeroes up to BLOCK_SIZE
 
-    def Put(self, block_number, block_data):
+##RAID
+    def distribute_block_to_servers(self, block_data):
+        distributed_blocks = []
+        chunk_size = fsconfig.BLOCK_SIZE // (self.num_servers - 1)
 
+        for i in range(self.num_servers - 1):
+            chunk = block_data[i*chunk_size : (i+1)*chunk_size]
+            distributed_blocks.append(chunk)
+
+        parity_block = bytearray(fsconfig.BLOCK_SIZE)
+        for block in distributed_blocks:
+            for i in range(len(block)):
+                parity_block[i] ^= block[i]
+
+        distributed_blocks.append(parity_block)
+
+        return distributed_blocks
+##RAID end
+
+    def Put(self, block_number, block_data):
         logging.debug(
             'Put: block number ' + str(block_number) + ' len ' + str(len(block_data)) + '\n' + str(block_data.hex()))
         if len(block_data) > fsconfig.BLOCK_SIZE:
             logging.error('Put: Block larger than BLOCK_SIZE: ' + str(len(block_data)))
             quit()
+
+##RAID
+        distributed_blocks = self.distribute_block_to_servers(block_data)
+        for i, block in enumerate(distributed_blocks):
+            server = self.servers[i % self.num_servers]
+            try:
+                server.Put(block_number, block)
+            except Exception as e:
+                logging.error(f'Failed to put block {block_number} to server {i}: {e}')
+                print(f'SERVER_DISCONNECTED PUT {block_number}')
+
+##RAID end
 
         if block_number in range(0, fsconfig.TOTAL_NUM_BLOCKS):
             # ljust does the padding with zeros
@@ -94,6 +135,26 @@ class DiskBlocks():
             # return self.block[block_number]
             # call Get() method on the server
             # don't look up cache for last two blocks
+
+##RAID
+            blocks = []
+            for i in range(self.num_servers):
+                server = self.servers[i % self.num_servers]
+                try:
+                    block = server.Get(block_number)
+                    blocks.append(block)
+                except Exception as e:
+                    logging.error(f'Failed to get block {block_number} from server {i}: {e}')
+                    print(f'CORRUPTED_BLOCK {block_number}')
+
+                    blocks.append(None)
+
+            for i in range(len(blocks)):
+                if blocks[i] is None:
+                    blocks[i] = self.reconstruct_block(blocks)
+
+            #return b''.join(blocks)
+## RAID end
             if (block_number < fsconfig.TOTAL_NUM_BLOCKS-2) and (block_number in self.blockcache):
                 print('CACHE_HIT '+ str(block_number))
                 data = self.blockcache[block_number]
@@ -117,9 +178,24 @@ class DiskBlocks():
         quit()
 
 ## RSM: read and set memory equivalent
+    def reconstruct_block(self, blocks):
+        missing_block = bytearray(fsconfig.BLOCK_SIZE)
+        for block in blocks:
+            if block is not None:
+                for i in range(len(block)):
+                    missing_block[i] ^= block[i]
 
-    def RSM(self, block_number):
+        return missing_block
+
+    def RSM(self, block_number, request): #check if request is valid!!
         logging.debug('RSM: ' + str(block_number))
+#RAID
+        try:
+            return self.rsm_server.RSM(request)
+        except Exception as e:
+            print(f'Failed to send RSM request to server {self.rsm_server.id}: {e}')
+#RAID end
+
         if block_number in range(0, fsconfig.TOTAL_NUM_BLOCKS):
             rpcretry = True
             while rpcretry:
@@ -138,6 +214,31 @@ class DiskBlocks():
 
         ## Acquire and Release using a disk block lock
 
+##RAID
+    def repair(self, failed_server_id):
+        # Replace the failed server with a new one
+        failed_server_url = self.servers[failed_server_id].url
+        self.servers[failed_server_id] = xmlrpc.client.ServerProxy(failed_server_url)
+
+        # Reconstruct each block on the new server
+        for block_number in range(fsconfig.TOTAL_NUM_BLOCKS):
+            blocks = []
+            for i in range(self.num_servers):
+                if i == failed_server_id:
+                    blocks.append(None)
+                else:
+                    server = self.servers[i]
+                    try:
+                        block = server.Get(block_number)
+                        blocks.append(block)
+                    except Exception as e:
+                        print(f'Failed to get block {block_number} from server {i}: {e}')
+                        blocks.append(None)
+
+            missing_block = self.reconstruct_block(blocks)
+            self.servers[failed_server_id].Put(block_number, missing_block)
+##RAID end
+      
     def Acquire(self):
         logging.debug('Acquire')
         RSM_BLOCK = fsconfig.TOTAL_NUM_BLOCKS - 1
