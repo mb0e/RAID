@@ -51,7 +51,7 @@ if __name__ == "__main__":
     # fsconfig.PrintFSConstants()
 
     # Initialize empty file system data in raw storage
-    RawBlocks = DiskBlocks()
+    RawBlocks = DiskBlocks(args.num_servers)
     # RawBlocks.PrintBlocks("Initialized", 0, 16)
 
     # Create a FileName object and initialize the root's inode

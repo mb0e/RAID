@@ -36,11 +36,12 @@ class DiskBlocks():
     for byte in data:
        checksum ^=byte
     return checksum
+  
   ## verify checksum
-  def VerifyChecksum(self,block_number):
+  def VerifyChecksum(self, block_number):
     data = self.block[block_number]
     computed_checksum = self.ComputeChecksum(block_number) 
-    return stored_checksum == computed_checksum 
+    return data == computed_checksum 
   ## edited
     
   def Sleep(self):

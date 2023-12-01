@@ -32,7 +32,7 @@ class DiskBlocks():
             server_proxy = xmlrpc.client.ServerProxy(server_url, use_builtin_types=True)
             self.block_servers.append(server_proxy)
         
-        self.rsm_server = self.servers[0]
+        self.rsm_server = self.block_servers[0]
         print(f'RSM server {self.rsm_server.id}')
 
 ##RAID end
@@ -79,7 +79,7 @@ class DiskBlocks():
 ##RAID
         distributed_blocks = self.distribute_block_to_servers(block_data)
         for i, block in enumerate(distributed_blocks):
-            server = self.servers[i % self.num_servers]
+            server = self.block_servers[i % self.num_servers]
             try:
                 server.Put(block_number, block)
             except Exception as e:
@@ -90,6 +90,7 @@ class DiskBlocks():
         self.checksums[block_number] = checksum
 
 ##RAID end
+
         if block_number in range(0, fsconfig.TOTAL_NUM_BLOCKS):
             # ljust does the padding with zeros
             putdata = bytearray(block_data.ljust(fsconfig.BLOCK_SIZE, b'\x00'))
@@ -149,7 +150,7 @@ class DiskBlocks():
 ##RAID
             blocks = []
             for i in range(self.num_servers):
-                server = self.servers[i % self.num_servers]
+                server = self.block_servers[i % self.num_servers]
                 try:
                     block = server.Get(block_number)
                     blocks.append(block)
@@ -163,7 +164,7 @@ class DiskBlocks():
                 if blocks[i] is None:
                     blocks[i] = self.reconstruct_block(blocks)
 
-            read_data = self.block_server.Get(block_number)
+            read_data = self.block_servers[0].Get(block_number)
             read_checksum = self.generate_checksum(read_data)
             stored_checksum = self.checksums[block_number]
             if read_checksum != stored_checksum:
@@ -180,7 +181,7 @@ class DiskBlocks():
                 while rpcretry:
                     rpcretry = False
                     try:
-                        data = self.block_server.Get(block_number)
+                        data = self.block_servers[0].Get(block_number)
                     except socket.timeout:
                         print("SERVER_TIMED_OUT")
                         time.sleep(fsconfig.RETRY_INTERVAL)
@@ -233,8 +234,8 @@ class DiskBlocks():
 ##RAID
     def repair(self, failed_server_id):
         # Replace the failed server with a new one
-        failed_server_url = self.servers[failed_server_id].url
-        self.servers[failed_server_id] = xmlrpc.client.ServerProxy(failed_server_url)
+        failed_server_url = self.block_servers[failed_server_id].url
+        self.block_servers[failed_server_id] = xmlrpc.client.ServerProxy(failed_server_url)
 
         # Reconstruct each block on the new server
         for block_number in range(fsconfig.TOTAL_NUM_BLOCKS):
@@ -243,7 +244,7 @@ class DiskBlocks():
                 if i == failed_server_id:
                     blocks.append(None)
                 else:
-                    server = self.servers[i]
+                    server = self.block_servers[i]
                     try:
                         block = server.Get(block_number)
                         blocks.append(block)
@@ -252,7 +253,7 @@ class DiskBlocks():
                         blocks.append(None)
 
             missing_block = self.reconstruct_block(blocks)
-            self.servers[failed_server_id].Put(block_number, missing_block)
+            self.block_servers[failed_server_id].Put(block_number, missing_block)
 ##RAID end
       
     def Acquire(self):
