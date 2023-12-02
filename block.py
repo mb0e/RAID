@@ -64,7 +64,7 @@ class DiskBlocks():
 ##RAID end
 
 ##RAID
-    def generate_checksum(block_data):
+    def generate_checksum(self, block_data):
         sha_signature = hashlib.sha256(block_data).hexdigest()
         return sha_signature
 ##RAID end
@@ -75,21 +75,6 @@ class DiskBlocks():
         if len(block_data) > fsconfig.BLOCK_SIZE:
             logging.error('Put: Block larger than BLOCK_SIZE: ' + str(len(block_data)))
             quit()
-
-##RAID
-        distributed_blocks = self.distribute_block_to_servers(block_data)
-        for i, block in enumerate(distributed_blocks):
-            server = self.block_servers[i % self.num_servers]
-            try:
-                server.Put(block_number, block)
-            except Exception as e:
-                logging.error(f'Failed to put block {block_number} to server {i}: {e}')
-                print(f'SERVER_DISCONNECTED PUT {block_number}')
-
-        checksum = self.generate_checksum(block_data)
-        self.checksums[block_number] = checksum
-
-##RAID end
 
         if block_number in range(0, fsconfig.TOTAL_NUM_BLOCKS):
             # ljust does the padding with zeros
@@ -102,7 +87,7 @@ class DiskBlocks():
             while rpcretry:
                 rpcretry = False
                 try:
-                    ret = self.block_server.Put(block_number, putdata)
+                    ret = self.block_servers[0].Put(block_number, putdata)
                 except socket.timeout:
                     print("SERVER_TIMED_OUT")
                     time.sleep(fsconfig.RETRY_INTERVAL)
@@ -120,11 +105,25 @@ class DiskBlocks():
                 while rpcretry:
                     rpcretry = False
                     try:
-                        self.block_server.Put(LAST_WRITER_BLOCK, updated_block)
+                        self.block_servers[0].Put(LAST_WRITER_BLOCK, updated_block)
                     except socket.timeout:
                         print("SERVER_TIMED_OUT")
                         time.sleep(fsconfig.RETRY_INTERVAL)
                         rpcretry = True
+        ##RAID
+                distributed_blocks = self.distribute_block_to_servers(block_data)
+                for i, block in enumerate(distributed_blocks):
+                    server = self.block_servers[i % self.num_servers]
+                    try:
+                        server.Put(block_number, block)
+                    except Exception as e:
+                        logging.error(f'Failed to put block {block_number} to server {i}: {e}')
+                        print(f'SERVER_DISCONNECTED PUT {block_number}')
+
+                checksum = self.generate_checksum(block_data)
+                self.checksums[block_number] = checksum
+
+        ##RAID end
             if ret == -1:
                 logging.error('Put: Server returns error')
                 quit()
@@ -147,34 +146,43 @@ class DiskBlocks():
             # call Get() method on the server
             # don't look up cache for last two blocks
 
-##RAID
-            blocks = []
-            for i in range(self.num_servers):
-                server = self.block_servers[i % self.num_servers]
-                try:
-                    block = server.Get(block_number)
-                    blocks.append(block)
-                except Exception as e:
-                    logging.error(f'Failed to get block {block_number} from server {i}: {e}')
-                    print(f'CORRUPTED_BLOCK {block_number}')
-
-                    blocks.append(None)
-
-            for i in range(len(blocks)):
-                if blocks[i] is None:
-                    blocks[i] = self.reconstruct_block(blocks)
-
-            read_data = self.block_servers[0].Get(block_number)
-            read_checksum = self.generate_checksum(read_data)
-            stored_checksum = self.checksums[block_number]
-            if read_checksum != stored_checksum:
-                logging.error(f'Checksum mismatch for block {block_number}. Data is corrupted.')
-
-            #return b''.join(blocks)
-## RAID end
             if (block_number < fsconfig.TOTAL_NUM_BLOCKS-2) and (block_number in self.blockcache):
                 print('CACHE_HIT '+ str(block_number))
                 data = self.blockcache[block_number]
+    ##RAID
+                blocks = []
+                for i in range(self.num_servers):
+                    server = self.block_servers[i % self.num_servers]
+                    try:
+                        block = server.Get(block_number)
+                        blocks.append(block)
+                    except Exception as e:
+                        logging.error(f'Failed to get block {block_number} from server {i}: {e}')
+                        print(f'CORRUPTED_BLOCK {block_number}')
+
+                        blocks.append(None)
+
+                for i in range(len(blocks)):
+                    if blocks[i] is None:
+                        blocks[i] = self.reconstruct_block(blocks)
+
+                read_data = self.block_servers[0].Get(block_number)
+                read_checksum = self.generate_checksum(read_data)
+
+                if block_number in self.checksums:
+                    stored_checksum = self.checksums[block_number]
+                else:
+                    # Handle the case where the block_number does not exist in the checksums dictionary
+                    # For example, you can set a default value, log an error message, or raise an exception
+                    stored_checksum = None  # or any default value
+                    logging.error(f'No stored checksum for block {block_number}')
+
+                if read_checksum != stored_checksum:
+                    logging.error(f'Checksum mismatch for block {block_number}. Data is corrupted.')
+                
+                
+                #return b''.join(blocks)
+    ## RAID end
             else:
                 print('CACHE_MISS ' + str(block_number))
                 rpcretry = True
@@ -218,7 +226,7 @@ class DiskBlocks():
             while rpcretry:
                 rpcretry = False
                 try:
-                    data = self.block_server.RSM(block_number)
+                    data = self.block_servers.RSM(block_number)
                 except socket.timeout:
                     print("SERVER_TIMED_OUT")
                     time.sleep(fsconfig.RETRY_INTERVAL)
@@ -295,7 +303,7 @@ class DiskBlocks():
         file_system_constants = "BS_" + str(fsconfig.BLOCK_SIZE) + "_NB_" + str(fsconfig.TOTAL_NUM_BLOCKS) + "_IS_" + str(fsconfig.INODE_SIZE) \
                             + "_MI_" + str(fsconfig.MAX_NUM_INODES) + "_MF_" + str(fsconfig.MAX_FILENAME) + "_IDS_" + str(fsconfig.INODE_NUMBER_DIRENTRY_SIZE)
         pickle.dump(file_system_constants, file)
-        pickle.dump(self.block, file)
+        pickle.dump(self.block_servers, file)
 
         file.close()
 
