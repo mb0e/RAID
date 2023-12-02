@@ -270,26 +270,14 @@ class FSShell():
         return 0
     
     def repair(self, server_id):
-        # Lock access to the disk
-        self.disk_lock.acquire()
+        self.RawBlocks.Acquire()
+        i, errorcode = self.RawBlocks.repair(server_id)
+        if i == -1:
+            print("Error: " + errorcode)
+            return -1
+        self.RawBlocks.Release()
+        return 0
 
-        try:
-            # Reconnect to the server
-            self.servers[server_id].connect()
-
-            # Regenerate all blocks for the server
-            for block_number in range(self.num_blocks):
-                # Get the block data from the other servers
-                block_data = self.get_block_data_from_other_servers(block_number, server_id)
-
-                # Write the block data to the server
-                self.servers[server_id].write(block_number, block_data)
-
-                # Update the checksum for the block
-                self.checksums[block_number] = self.generate_checksum(block_data)
-        finally:
-            # Release the disk lock
-            self.disk_lock.release()
 
     ## Main interpreter loop
     def Interpreter(self):
